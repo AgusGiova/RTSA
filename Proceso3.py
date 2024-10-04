@@ -13,7 +13,7 @@ import matplotlib.colors as colors
 def handler(signum, frame):
     global sh_m3
     print('Cerrando Shared Memory del proceso 3....')
-    #sh_m3.close()
+    sh_m3.close()
     print('Cerrando Proceso 3....')
     exit()
 

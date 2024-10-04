@@ -5,6 +5,7 @@ Matplotlib and NumPy have to be installed.
 
 """
 import argparse
+import threading
 import queue
 import sys
 from scipy import signal
@@ -12,9 +13,24 @@ from matplotlib.animation import FuncAnimation
 import matplotlib.pyplot as plt
 import numpy as np
 import sounddevice as sd
-from scipy.signal import spectrogram
+import signal as sig
 import matplotlib.colors as colors
 from multiprocessing import shared_memory
+
+def handler(signum, frame):
+    global FFT1_kill
+    global sh_m_f
+    global sh_m_b
+    
+    FFT1_kill = True
+
+    sh_m_f.close()
+    sh_m_b.close()
+
+    sh_m_f.unlink()
+    sh_m_b.unlink()
+    
+    exit()
 
 def int_or_str(text):
     """Helper function for argument parsing."""
@@ -46,7 +62,7 @@ parser.add_argument(
     '-d', '--device', type=int_or_str,
     help='input device (numeric ID or substring)')
 parser.add_argument(
-    '-w', '--window', type=int, default=8192, metavar='DURATION',
+    '-w', '--window', type=int, default=1024, metavar='DURATION',
     help='visible time slot (default: %(default)s ms)')
 parser.add_argument(
     '-i', '--interval', type=float, default=0,
@@ -65,8 +81,51 @@ parser.add_argument(
 args = parser.parse_args(remaining)
 if any(c < 1 for c in args.channels):
     parser.error('argument CHANNEL: must be >= 1')
+    
 mapping = [c - 1 for c in args.channels]  # Channel numbers start with 1
-q = queue.Queue()
+audio_queue = queue.Queue()
+FFT_queue = []
+FFT_queue.append(queue.Queue())
+FFT_queue.append(queue.Queue())
+sig.signal(sig.SIGINT,handler=handler)  
+FFT_kill = False
+FFT_thead_index = 0
+
+def FFT1_callback(data):
+    global window_list
+    global window_list_index
+    global FFT_kill
+    global shared_array_forward
+    global FFT_queue
+    
+    print("En el thread 1")
+
+    while (FFT_kill==False):
+        
+        data = FFT_queue[0].get()
+        
+        print("Haciendo la FFT1")
+
+        shared_array_forward[0] = np.abs(np.fft.fft(data*(window_list[window_list_index])))
+        shared_array_forward[1] = np.linspace(-int(args.samplerate/(args.downsample*2)),int(args.samplerate/(args.downsample*2)),len(shared_array_forward[0]))
+
+def FFT2_callback(data):
+    global window_list
+    global window_list_index
+    global FFT_kill
+    global shared_array_forward
+    global FFT_queue
+    
+    print("En el thread 2")
+
+    while (FFT_kill==False):
+        
+        data = FFT_queue[1].get()
+        
+        print("Haciendo la FFT2")
+
+        shared_array_forward[0] = np.abs(np.fft.fft(data*(window_list[window_list_index])))
+        shared_array_forward[1] = np.linspace(-int(args.samplerate/(args.downsample*2)),int(args.samplerate/(args.downsample*2)),len(shared_array_forward[0]))
 
 
 def audio_callback(indata, frames, time, status):
@@ -74,7 +133,7 @@ def audio_callback(indata, frames, time, status):
     if status:
         print(status, file=sys.stderr)
     # Fancy indexing with mapping creates a (necessary!) copy:
-    q.put(indata[::args.downsample, mapping])
+    audio_queue.put(indata[::args.downsample, mapping])
 
 
 def update_plot(frame):
@@ -88,34 +147,39 @@ def update_plot(frame):
     global shared_array_forward
     global window_list_index
     global window_list
+    global FFT_thead_index
     while True:
         try:
-            data = q.get_nowait()
+            data = audio_queue.get_nowait()
         except queue.Empty:
             break
         shift = len(data)
         plotdata = np.roll(plotdata, -shift, axis=0)
         plotdata[-shift:, :] = data
     x = plotdata[:, 0]
+    FFT_queue[FFT_thead_index].put(x)
+
+    if(FFT_thead_index>=1): FFT_thead_index = 0
+    else: FFT_thead_index = FFT_thead_index + 1
+
     for column, line in enumerate(lines1):
         line.set_ydata(plotdata[:, column])
     window_list_index = int(shared_array_backward[0])
-    shared_array_forward[0] = np.abs(np.fft.fft(x*(window_list[window_list_index])))
-    shared_array_forward[1] = np.linspace(-int(args.samplerate/(args.downsample*2)),int(args.samplerate/(args.downsample*2)),len(shared_array_forward[0]))
+    
     
     for column, line in enumerate(lines2):
         line.set_ydata(shared_array_forward[0])
-    
-    # Espectrograma en la tercera columna
-    # f, t_spec, Sxx = spectrogram(plotdata[:,column], fs=args.samplerate/args.downsample)
-    # cax = ax3.pcolormesh(f, t_spec, Sxx.T)
-    # ax3.hist2d(x=frecuencias, y=X, bins=200, norm=colors.LogNorm(clip=True))
+
     return [lines1, lines2]
 
 
 try:
     window_list = []
     window_list_index = 0
+    FFT1 = threading.Thread(target=FFT1_callback, args=(1,))
+    FFT1.start()
+    FFT2 = threading.Thread(target=FFT2_callback, args=(1,))
+    FFT2.start()
     sh_m_f = shared_memory.SharedMemory(create=True, size=np.zeros(shape=(args.window,args.window)).nbytes, name=SHARED_MEMORY_FORWARD_NAME)        # Creamos la Shared memory con el tamaño de las muestras y con un nombre definido
     sh_m_b = shared_memory.SharedMemory(create=True, size=np.zeros(shape=(5)).nbytes, name=SHARED_MEMORY_BACKWARD_NAME)        # Creamos la Shared memory con el tamaño de las muestras y con un nombre definido
     if args.samplerate is None:
@@ -164,5 +228,8 @@ try:
     # Borrar la memoria compartida (esto debe hacerse solo cuando ya no la uses)
     sh_m_f.unlink()
     sh_m_b.unlink()
+
+    FFT1_kill = True
 except Exception as e:
     parser.exit(type(e).__name__ + ': ' + str(e))
+    FFT1_kill = True
