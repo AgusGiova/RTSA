@@ -84,7 +84,7 @@ def update(j):
         FFTs_concatenados = np.concatenate(FFTs)
         fff = np.concatenate(ff)
 
-        H, xedges, yedges = np.histogram2d(x=fff, y=FFTs_concatenados, bins=200, normed=colors.LogNorm(clip=True))
+        H, xedges, yedges = np.histogram2d(x=fff, y=FFTs_concatenados, bins=200, normed=colors.LogNorm(clip=True),)
 
         ax.set_xlim(20,22050)
         ax.pcolormesh(xedges, yedges, H.T, cmap='inferno')
