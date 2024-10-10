@@ -106,7 +106,11 @@ def FFT1_callback(data):
         
         print("Haciendo la FFT1")
 
-        shared_array_forward[0] = np.abs(np.fft.fft(data*(window_list[window_list_index])))
+        aux = np.abs(np.fft.fft(data*(window_list[window_list_index])))
+
+        [0.00001 if x==0 else x for x in aux]
+
+        shared_array_forward[0] = aux
         shared_array_forward[1] = np.linspace(-int(args.samplerate/(args.downsample*2)),int(args.samplerate/(args.downsample*2)),len(shared_array_forward[0]))
 
 def FFT2_callback(data):
@@ -124,7 +128,11 @@ def FFT2_callback(data):
         
         print("Haciendo la FFT2")
 
-        shared_array_forward[0] = np.abs(np.fft.fft(data*(window_list[window_list_index])))
+        aux = np.abs(np.fft.fft(data*(window_list[window_list_index])))
+
+        [0.00001 if x==0 else x for x in aux]
+
+        shared_array_forward[0] = aux
         shared_array_forward[1] = np.linspace(-int(args.samplerate/(args.downsample*2)),int(args.samplerate/(args.downsample*2)),len(shared_array_forward[0]))
 
 

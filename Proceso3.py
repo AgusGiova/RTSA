@@ -5,16 +5,21 @@ import matplotlib.pyplot as plt
 import matplotlib.widgets as widgets
 import matplotlib.animation as animation
 import matplotlib.colors as colors
+import threading
 
 # -----------------------------------------------------------------------------------------
 # Funciones a utilizar
 # -----------------------------------------------------------------------------------------
 
 def handler(signum, frame):
-    global sh_m3
+    global sh_m_b
+    global sh_m_f
+    global KILL
     print('Cerrando Shared Memory del proceso 3....')
-    sh_m3.close()
+    sh_m_b.close()
+    sh_m_f.close()
     print('Cerrando Proceso 3....')
+    KILL = True
     exit()
 
 def stop(val):
@@ -46,7 +51,6 @@ def Wind(val):
     config[0] = wind_text_index
 
 def init():
-    ax.set_xlim([-100,20])
     plt.subplots_adjust(bottom=0.2)
 
 def update(j):
@@ -56,8 +60,7 @@ def update(j):
     global f
     global f_len
     global ff
-
-    print(f)
+    global espectrograma
 
     f_interpolation = np.linspace(0,int(f[-1]),int(f[-1])*2*inter_val[inter_text_index])                    # Definimos un eje de frecuencia para la interpolacion
 
@@ -67,13 +70,10 @@ def update(j):
 
     b = 10*np.log10(np.abs(b)/0.001)                                                        # Pasamos a decibelios (dBm)
 
-    if(len(FFTs)<10):                                                                       # Esperamos a recibir al menos 10 FFTs para realizar el historiagrama
-        ax.clear()
+    if(len(FFTs)<FFTS_HIST):                                                                       # Esperamos a recibir al menos 10 FFTs para realizar el historiagrama
         FFTs.append(b)
         ff.append(f_interpolation)
     elif(stop_val):
-
-        ax.clear()
 
         FFTs.pop(0)
         ff.pop(0)
@@ -84,10 +84,11 @@ def update(j):
         FFTs_concatenados = np.concatenate(FFTs)
         fff = np.concatenate(ff)
 
-        H, xedges, yedges = np.histogram2d(x=fff, y=FFTs_concatenados, bins=200, normed=colors.LogNorm(clip=True),)
+        H, xedges, yedges = np.histogram2d(x=fff, y=FFTs_concatenados, bins=BINS, normed=colors.LogNorm(clip=True))
 
         ax.set_xlim(20,22050)
-        ax.pcolormesh(xedges, yedges, H.T, cmap='inferno')
+        espectrograma.set_array(H.T)
+        #ax.pcolormesh(xedges, yedges, H.T, cmap='inferno')
 
 # -----------------------------------------------------------------------------------------
 
@@ -99,7 +100,8 @@ SHARED_MEMORY_FORWARD_NAME = "FFT_Data"                                         
 SHARED_MEMORY_BACKWARD_NAME = "Config_Data"                                                             # Nombre de la Shared Memory para configurar la recepcion
 fps = 30                                                                                    # Frames por segundo
 FS = 44100                                                                                  # Frecuencia de muestreo
-TIME_IN_SEC = 0.01                                                                          # Tiempo de captura
+FFTS_HIST = 20                                                                          
+BINS = 400
 FRAMES = 4096                                                              # Duración total de la animación en segundos      
 inter_val = [1,2,5,10,20,40]                                                                # Coeficiente entre la cantidad de muestras sin interpolar y la cantidad de muestras luego de interpolar                                                                                                                                            # Tasa de muestreo en Hz
 FFTs = []                                                                                   # Variable para almacenar la amplitud de un conjunto de FFTs
@@ -111,7 +113,6 @@ wind_text = ['Rectangular','Flattop','Hamming','Hann','Bartlett','Parzen','Bohma
 wind_text_index = 0
 first=1
 # -----------------------------------------------------------------------------------------
-
 
 # -----------------------------------------------------------------------------------------
 # Asignación del handler para la signal CTRL+C
@@ -129,6 +130,7 @@ config = np.ndarray((5), dtype=np.float64, buffer=sh_m_b.buf)                   
 sh_m_f = shared_memory.SharedMemory(create=False ,name=SHARED_MEMORY_FORWARD_NAME)                   # Conectamos a la Shared Memory
 a = np.ndarray((int(config[3]),int(config[3])), dtype=np.float64, buffer=sh_m_f.buf)                             # Redefinimos el buffer de la Shared Memory para trabajar mas comodamente
 data = a[0]
+data_prev = data
 # -----------------------------------------------------------------------------------------
 
 
@@ -145,6 +147,27 @@ f_len = len(f)
 # -----------------------------------------------------------------------------------------
 fig = plt.figure()                                                                          # Construimos la figura
 ax = fig.add_subplot(1,1,1)                                                                         
+
+aux1 = []
+aux2 = []
+
+f_interpolation = np.linspace(0,int(f[-1]),int(f[-1])*2*inter_val[inter_text_index])                    # Definimos un eje de frecuencia para la interpolacion
+
+b = np.interp(f_interpolation, f[int(f_len/2):-1], data[int(f_len/2):-1])                                          # Realizamos la interpolacion
+
+b = list(reversed(b))
+
+b = 10*np.log10(np.abs(b)/0.001)                                                        # Pasamos a decibelios (dBm)
+
+for i in range(FFTS_HIST):
+    aux1.append(b)
+    aux2.append(f_interpolation)
+
+aux1 = np.concatenate(aux1)
+aux2 = np.concatenate(aux2)
+
+H, xedges, yedges = np.histogram2d(x=aux2, y=aux1, bins=BINS, normed=colors.LogNorm(clip=True))
+espectrograma = ax.pcolormesh(xedges, yedges, H.T, cmap='inferno',norm=colors.LogNorm(clip=True))
 
 # Boton de stop
 bton_axes1 = plt.axes([0.8, 0.05, 0.1, 0.075])
@@ -170,10 +193,12 @@ txt_axes3 = plt.axes([0.4, 0.1, 0.1, 0.075])
 txt3 = widgets.TextBox(txt_axes3, '')
 # -----------------------------------------------------------------------------------------
 
-
 # -----------------------------------------------------------------------------------------
 # Iniciamos la ventana del programa
 # -----------------------------------------------------------------------------------------
 ani = animation.FuncAnimation(fig, update, init_func=init, blit=False, interval=1000/fps)
 plt.show()
 # -----------------------------------------------------------------------------------------
+
+sh_m_b.close()
+sh_m_f.close()
