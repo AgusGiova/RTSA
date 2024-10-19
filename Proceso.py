@@ -16,6 +16,7 @@ import sounddevice as sd
 import signal as sig
 import matplotlib.colors as colors
 from multiprocessing import shared_memory
+import time
 
 def handler(signum, frame):
     global FFT1_kill
@@ -42,6 +43,8 @@ def int_or_str(text):
 SHARED_MEMORY_FORWARD_NAME = "FFT_Data"                                                             # Nombre asigando a la Shared Memory
 SHARED_MEMORY_BACKWARD_NAME = "Config_Data"                                                             # Nombre asigando a la Shared Memory
 WINDOW_NAME_LIST = ['flattop','blackman','hamming','hann','bartlett','parzen','bohman']
+contador = 0
+tprev = 0
 
 parser = argparse.ArgumentParser(add_help=False)
 parser.add_argument(
@@ -97,6 +100,8 @@ def FFT1_callback(data):
     global FFT_kill
     global shared_array_forward
     global FFT_queue
+
+    global contador
     
     print("En el thread 1")
 
@@ -104,7 +109,9 @@ def FFT1_callback(data):
         
         data = FFT_queue[0].get()
         
-        print("Haciendo la FFT1")
+        #print("Haciendo la FFT1")
+
+        contador = contador + 1
 
         aux = np.abs(np.fft.fft(data*(window_list[window_list_index])))
 
@@ -119,6 +126,8 @@ def FFT2_callback(data):
     global FFT_kill
     global shared_array_forward
     global FFT_queue
+
+    global contador
     
     print("En el thread 2")
 
@@ -126,7 +135,9 @@ def FFT2_callback(data):
         
         data = FFT_queue[1].get()
         
-        print("Haciendo la FFT2")
+        #print("Haciendo la FFT2")
+
+        contador = contador + 1
 
         aux = np.abs(np.fft.fft(data*(window_list[window_list_index])))
 
@@ -156,6 +167,10 @@ def update_plot(frame):
     global window_list_index
     global window_list
     global FFT_thead_index
+
+    global contador
+    global tprev
+    
     while True:
         try:
             data = audio_queue.get_nowait()
@@ -166,6 +181,14 @@ def update_plot(frame):
         plotdata[-shift:, :] = data
     x = plotdata[:, 0]
     FFT_queue[FFT_thead_index].put(x)
+
+    t1 = time.time()
+    if(t1-tprev>=1 and tprev!=0):
+        print('Cantidad de FFTs por segundo = ' + str(contador) + ' FFTs/Seg')
+        contador = 0
+        tprev = t1
+    elif(tprev==0):
+        tprev = t1
 
     if(FFT_thead_index>=1): FFT_thead_index = 0
     else: FFT_thead_index = FFT_thead_index + 1

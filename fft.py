@@ -15,6 +15,8 @@ import sounddevice as sd
 from scipy.signal import spectrogram
 import matplotlib.colors as colors
 from multiprocessing import shared_memory
+import time
+from fast_histogram import histogram2d
 
 def int_or_str(text):
     """Helper function for argument parsing."""
@@ -24,6 +26,8 @@ def int_or_str(text):
         return text
 
 SHARED_MEMORY_NAME = "Data"                                                             # Nombre asigando a la Shared Memory
+contador = 0
+tprev = 0
 
 parser = argparse.ArgumentParser(add_help=False)
 parser.add_argument(
@@ -47,7 +51,7 @@ parser.add_argument(
     '-w', '--window', type=int, default=1024, metavar='DURATION',
     help='visible time slot (default: %(default)s ms)')
 parser.add_argument(
-    '-i', '--interval', type=float, default=30,
+    '-i', '--interval', type=float, default=0,
     help='minimum time between plot updates (default: %(default)s ms)')
 # parser.add_argument(
 #     '-b', '--blocksize', type=int, help='block size (in samples)', default=256)
@@ -85,7 +89,7 @@ def update_plot(frame):
     therefore the queue tends to contain multiple blocks of audio data.
 
     """
-    global plotdata, i, Z
+    global plotdata, i, Z, contador, tprev
     while True:
         try:
             data = q.get_nowait()
@@ -96,9 +100,19 @@ def update_plot(frame):
         plotdata[-shift:, :] = data
     x = plotdata[:, 0]
     for column, line in enumerate(lines1):
-        line.set_ydata(x)
+        line.set_ydata(x*window)
     shared_array = abs(np.fft.fft(x*window))
     
+    contador = contador + 1
+
+    t1 = time.time()
+    if(t1-tprev>=1 and tprev!=0):
+        print('Cantidad de FFTs por segundo = ' + str(contador) + ' FFTs/Seg')
+        contador = 0
+        tprev = t1
+    elif(tprev==0):
+        tprev = t1
+
     for column, line in enumerate(lines2):
         line.set_ydata(shared_array)
 
@@ -124,10 +138,11 @@ def update_plot(frame):
 
         FFTs_concatenados = np.concatenate(FFTs)
         fff = np.concatenate(ff)
-        
+
         # Espectrograma en la cuarta columna
-        H, xedges, yedges = np.histogram2d(x=fff, y=FFTs_concatenados, bins=BINS)
+        H = histogram2d(x=fff, y=FFTs_concatenados, bins=BINS, range=((20,22000),(-5,120)))
         espectrograma.set_array(H.T)
+
         FFTs.pop(0)
         ff.pop(0)
     
@@ -158,7 +173,7 @@ try:
         ax1.legend([f'channel {c}' for c in args.channels],
                   loc='lower left', ncol=len(args.channels))
     ax1.axis((0, len(plotdata), -1, 1))
-    ax2.set_ylim((-1, 100))
+    ax2.set_ylim((-1, 10))
     ax1.set_yticks([0])
     ax1.tick_params(bottom=False, top=False, labelbottom=False,
                    right=False, left=False, labelleft=False)
@@ -184,7 +199,7 @@ try:
     FFTs_concatenados = np.concatenate(FFTs)
     fff = np.concatenate(ff)
 
-    H, xedges, yedges = np.histogram2d(x=frecuencias[:args.window//2], y=np.zeros(args.window//2), bins=BINS)
+    H, xedges, yedges = np.histogram2d(x=frecuencias[:args.window//2], y=np.zeros(args.window//2), bins=BINS, range=((20,22000),(-5,120)))
     espectrograma = ax4.pcolormesh(xedges, yedges, H.T)
     # ax3.tick_params(left=False, labelleft=False)
     fig.tight_layout(pad=0)

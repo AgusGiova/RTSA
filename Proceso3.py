@@ -87,6 +87,7 @@ def update(j):
         H, xedges, yedges = np.histogram2d(x=fff, y=FFTs_concatenados, bins=BINS, normed=colors.LogNorm(clip=True))
 
         ax.set_xlim(20,22050)
+        print()
         espectrograma.set_array(H.T)
         #ax.pcolormesh(xedges, yedges, H.T, cmap='inferno')
 
@@ -101,7 +102,7 @@ SHARED_MEMORY_BACKWARD_NAME = "Config_Data"                                     
 fps = 30                                                                                    # Frames por segundo
 FS = 44100                                                                                  # Frecuencia de muestreo
 FFTS_HIST = 20                                                                          
-BINS = 400
+BINS = 200
 FRAMES = 4096                                                              # Duración total de la animación en segundos      
 inter_val = [1,2,5,10,20,40]                                                                # Coeficiente entre la cantidad de muestras sin interpolar y la cantidad de muestras luego de interpolar                                                                                                                                            # Tasa de muestreo en Hz
 FFTs = []                                                                                   # Variable para almacenar la amplitud de un conjunto de FFTs
