@@ -11,6 +11,22 @@ import threading
 # Funciones a utilizar
 # -----------------------------------------------------------------------------------------
 
+def get_hist2d_curve(hist,xedges,yedges):
+
+    first_y_values = []
+    x_bin_centers = []
+
+    # Recorrer cada columna del histograma (eje X)
+    for i in range(hist.shape[1]):
+        # Recorrer los bins del eje Y desde arriba hacia abajo
+        for j in range(hist.shape[0]-1):
+            if hist[i, (hist.shape[0]-1)-j] > 0:  # Si el valor es distinto de cero
+                x_bin_centers.append((xedges[i] + xedges[i+1]) / 2)  # Centro del bin en X
+                first_y_values.append(yedges[(hist.shape[0]-1)-j])  # Valor del bin en Y
+                break
+
+    return [x_bin_centers, first_y_values]
+
 def handler(signum, frame):
     global sh_m_b
     global sh_m_f
@@ -61,6 +77,7 @@ def update(j):
     global f_len
     global ff
     global espectrograma
+    global ploteo
 
     f_interpolation = np.linspace(0,int(f[-1]),int(f[-1])*2*inter_val[inter_text_index])                    # Definimos un eje de frecuencia para la interpolacion
 
@@ -89,7 +106,10 @@ def update(j):
         ax.set_xlim(20,22050)
         print()
         espectrograma.set_array(H.T)
-        #ax.pcolormesh(xedges, yedges, H.T, cmap='inferno')
+
+        x_bin_centers, first_y_values = get_hist2d_curve(H,xedges,yedges)
+
+        ploteo.set_ydata(first_y_values)
 
 # -----------------------------------------------------------------------------------------
 
@@ -169,6 +189,10 @@ aux2 = np.concatenate(aux2)
 
 H, xedges, yedges = np.histogram2d(x=aux2, y=aux1, bins=BINS, normed=colors.LogNorm(clip=True))
 espectrograma = ax.pcolormesh(xedges, yedges, H.T, cmap='inferno',norm=colors.LogNorm(clip=True))
+
+x_bin_centers, first_y_values = get_hist2d_curve(H,xedges,yedges)
+
+ploteo, = ax.plot(x_bin_centers, first_y_values)
 
 # Boton de stop
 bton_axes1 = plt.axes([0.8, 0.05, 0.1, 0.075])

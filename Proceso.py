@@ -19,11 +19,11 @@ from multiprocessing import shared_memory
 import time
 
 def handler(signum, frame):
-    global FFT1_kill
+    global FFT_kill
     global sh_m_f
     global sh_m_b
     
-    FFT1_kill = True
+    FFT_kill = True
 
     sh_m_f.close()
     sh_m_b.close()
