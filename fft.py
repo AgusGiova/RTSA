@@ -54,7 +54,7 @@ parser.add_argument(
     '-w', '--window', type=int, default=1024, metavar='DURATION',
     help='visible time slot (default: %(default)s ms)')
 parser.add_argument(
-    '-i', '--interval', type=float, default=0,
+    '-i', '--interval', type=float, default=1,
     help='minimum time between plot updates (default: %(default)s ms)')
 # parser.add_argument(
 #     '-b', '--blocksize', type=int, help='block size (in samples)', default=256)
@@ -169,7 +169,7 @@ def FFT1_callback(data):
             if(b[i]==0):
                 b[i]=0.00001
 
-        b = 20*np.log10(b/0.001)                                                        # Pasamos a decibelios (dBm)
+        b = 20*np.log10(b/len(b))                                                        # Pasamos a decibelios (dBm/Hz)
 
         FFTs.append(b[:args.window//2])
         ff.append(frecuencias[:args.window//2])
@@ -191,7 +191,7 @@ def FFT2_callback(data):
         
         data = FFT_queue[1].get()
 
-        contador = contador + 1
+        #contador = contador + 1
 
         aux = np.abs(np.fft.fft(data*(window_list[wind_text_index])))
 
@@ -205,7 +205,7 @@ def FFT2_callback(data):
             if(b[i]==0):
                 b[i]=0.00001
 
-        b = 20*np.log10(b/0.001)                                                        # Pasamos a decibelios (dBm)
+        b = 20*np.log10(b/len(b))                                                    # Pasamos a decibelios (dBm)
 
         #FFTs.append(b)
         #ff.append(f_interpolation)
@@ -236,10 +236,10 @@ def update_plot(frame):
     therefore the queue tends to contain multiple blocks of audio data.
 
     """
-    global plotdata, i, Z, contador, tprev, window_list, wind_text_index, FFT_queue, FFT_thead_index, FFTs, ff
+    global plotdata, i, Z, contador, tprev, window_list, wind_text_index, FFTs, ff
 
     xedges = np.linspace(20,22000,BINS)
-    yedges = np.linspace(-5,120,BINS)
+    yedges = np.linspace(-120,20,BINS)
 
     t1 = time.time()
     if(t1-tprev>=1 and tprev!=0):
@@ -249,24 +249,20 @@ def update_plot(frame):
     elif(tprev==0):
         tprev = t1
 
-    for column, line in enumerate(lines2):
-        line.set_ydata(shared_array)
+    lines1.set_ydata(plotdata[:, 0]*(window_list[wind_text_index]))
 
     # Espectrograma en la tercera columna
     Z = np.roll(Z, -1, axis=0)
-    Z[-1] = shared_array[:args.window//2]
+    Z[-1] = FFTs[-1]
     quadmesh.set_array(Z)
 
     FFTs_concatenados = np.concatenate(FFTs)
     fff = np.concatenate(ff)
 
-    print(len(fff))
-    print(len(FFTs_concatenados))
-
-    if(len(FFTs)>LEN_SIZE and len(FFTs_concatenados)==len(fff)):
+    if(len(FFTs)>LEN_SIZE and len(FFTs_concatenados)==len(fff) and stop_val==1):
 
         # Espectrograma en la cuarta columna
-        H = histogram2d(x=fff, y=FFTs_concatenados, bins=BINS, range=((20,22000),(-5,120)))
+        H = histogram2d(x=fff, y=FFTs_concatenados, bins=BINS, range=((20,22000),(-120,20)))
         espectrograma.set_array(H.T)
 
         x_bin_centers, first_y_values = get_hist2d_curve(H,xedges,yedges)
@@ -304,16 +300,14 @@ try:
     # length = int(args.window * args.samplerate / (1000 * args.downsample))
     shared_array = np.ndarray((args.window,), buffer=sh_m.buf)  
     plotdata = np.zeros((args.window, len(args.channels)))
-    fig, (ax1, ax2, ax3, ax4) = plt.subplots(4,1)
-    lines1 = ax1.plot(plotdata)
+    fig, (ax1, ax3, ax4) = plt.subplots(3,1)
+    lines1, = ax1.plot(plotdata)
     # Calcular las frecuencias asociadas
     frecuencias = np.fft.fftfreq(len(plotdata), args.downsample/args.samplerate)
-    lines2 = ax2.plot(frecuencias, plotdata)
     if len(args.channels) > 1:
         ax1.legend([f'channel {c}' for c in args.channels],
                   loc='lower left', ncol=len(args.channels))
     ax1.axis((0, len(plotdata), -1, 1))
-    ax2.set_ylim((-1, 10))
     ax1.set_yticks([0])
     ax1.tick_params(bottom=False, top=False, labelbottom=False,
                    right=False, left=False, labelleft=False)
@@ -329,7 +323,7 @@ try:
         if(b[i]==0):
             b[i]=0.00001
 
-    b = 20*np.log10(np.abs(b)/0.001)                                                        # Pasamos a decibelios (dBm)
+    b = 20*np.log10(np.abs(b))                                                        # Pasamos a decibelios (dBm)
 
     for i in range(LEN_SIZE):
 
@@ -339,12 +333,12 @@ try:
     FFTs_concatenados = np.concatenate(FFTs)
     fff = np.concatenate(ff)
 
-    H, xedges, yedges = np.histogram2d(x=frecuencias[:args.window//2], y=np.zeros(args.window//2), bins=BINS, range=((20,22000),(-5,120)))
+    H, xedges, yedges = np.histogram2d(x=frecuencias[:args.window//2], y=np.zeros(args.window//2), bins=BINS, range=((20,22000),(-120,20)))
     espectrograma = ax4.pcolormesh(xedges, yedges, H.T)
 
     x_bin_centers, first_y_values = get_hist2d_curve(H,xedges,yedges)
 
-    ploteo, = ax4.plot(x_bin_centers, first_y_values)
+    ploteo, = ax4.plot(x_bin_centers, first_y_values, linestyle='-', color="coral")
 
     # ax3.tick_params(left=False, labelleft=False)
     fig.tight_layout(pad=0)
@@ -382,5 +376,6 @@ try:
     sh_m.close()
     # Borrar la memoria compartida (esto debe hacerse solo cuando ya no la uses)
     sh_m.unlink()
+    FFT_kill = True
 except Exception as e:
     parser.exit(type(e).__name__ + ': ' + str(e))
