@@ -20,6 +20,7 @@ from fast_histogram import histogram2d
 import signal as sig
 import matplotlib.widgets as widgets
 import threading
+import cmath
 
 def int_or_str(text):
     """Helper function for argument parsing."""
@@ -93,6 +94,8 @@ LEN_SIZE = 100
 INTERPOLATION = 4       #x4
 WINDOW_NAME_LIST = ['flattop','blackman','hamming','hann','bartlett','parzen','bohman']
 
+ADC_UNCERTAINTY = 1   #No es porcentual (1 mV) (Valor a modo de prueba)
+
 def handler(signum, frame):
     global FFT_kill
 
@@ -101,6 +104,28 @@ def handler(signum, frame):
     print("Kill a todos los Threaths [" + str(FFT_kill) + "]")
 
     exit()
+
+def get_uncertainty(y,x):
+
+    u = 0
+    for i in range(args.window):
+        u = u + cmath.exp(((-1j)*2*np.pi*x*i)/args.window)
+
+    u = cmath.sqrt(u)*ADC_UNCERTAINTY
+
+    u_real = np.real(u)
+    u_imag = np.imag(u)
+
+    u_real_chi2 = 2*(u_real**4) + 4*(u_real**2)*(np.real(y[x])**2)
+    u_imag_chi2 = 2*(u_imag**4) + 4*(u_imag**2)*(np.imag(y[x])**2)
+
+    u_sum2 = u_real_chi2 + u_imag_chi2
+
+    u_val = (1/(4*np.sqrt((u_real**2)+(u_imag**2))))*u_sum2
+    u_val = np.sqrt(u_val)
+
+    return u_val
+
 
 def get_hist2d_curve(hist,xedges,yedges):
 
@@ -169,7 +194,11 @@ def FFT1_callback(data):
 
         contador = contador + 1
 
-        b = np.abs(np.fft.fft(data*(window_list[wind_text_index])))
+        fft_result = np.fft.fft(data*(window_list[wind_text_index]))
+
+        print(get_uncertainty(fft_result,1000)/np.abs(fft_result[1000]))
+
+        b = np.abs(fft_result)
 
         for i in range(len(b)):
             if(b[i]==0):
