@@ -30,7 +30,6 @@ def int_or_str(text):
     except ValueError:
         return text
 
-SHARED_MEMORY_NAME = "Data"                                                             # Nombre asigando a la Shared Memory
 contador = 0
 tprev = 0
 
@@ -89,11 +88,28 @@ wind_text = ['Rectangular','Flattop','Hamming','Hann','Bartlett','Parzen','Bohma
 wind_text_index = 0
 first=1
 window_list = []
-hist_range = ((1,250),(-100,5))
+hist_range = ((1,1000),(-100,5))
+u_i = 0
+
+"""
+
+u_i/sqrt(n)
+
+timepo:
+
+matriz de incertidumbres y hacer sqrt(sumar(u_i^2))
+
+
+"""
+
+Fs = 2000
 
 BINS = 200
 LEN_SIZE = 50
 WINDOW_NAME_LIST = ['flattop','blackman','hamming','hann','bartlett','parzen','bohman']
+
+amplitud_solicitada = 0
+frecuencia_solicitada = 250
 
 ADC_UNCERTAINTY = 1   #No es porcentual (1 mV) (Valor a modo de prueba)
 
@@ -127,6 +143,27 @@ def get_uncertainty(y,x):
 
     return u_val
 
+def get_uncertainty_no_array(y,x):
+
+    u = 0
+    for i in range(args.window):
+        u = u + cmath.exp(((-1j)*2*np.pi*x*i)/args.window)
+
+    u = cmath.sqrt(u)*ADC_UNCERTAINTY
+
+    u_real = np.real(u)
+    u_imag = np.imag(u)
+
+    u_real_chi2 = 2*(u_real**4) + 4*(u_real**2)*(np.real(y)**2)
+    u_imag_chi2 = 2*(u_imag**4) + 4*(u_imag**2)*(np.imag(y)**2)
+
+    u_sum2 = u_real_chi2 + u_imag_chi2
+
+    u_val = (1/(4*np.sqrt((u_real**2)+(u_imag**2))))*u_sum2
+    u_val = np.sqrt(u_val)
+
+    return u_val
+
 def get_FMBW(x,y):
     max_value = np.max(y)
     max_index_value = x[np.argmax(y)]
@@ -141,24 +178,21 @@ def get_FMBW(x,y):
 
     return [max_index_value, max_value, x_min_20db_value, x_max_20db_value]
 
-def get_hist2d_curve(hist,xedges,yedges):
+def get_hist2d_curve(hist, xedges, yedges):
+    # Encontrar el índice del primer valor no cero desde arriba hacia abajo en cada columna
+    first_nonzero_indices = np.argmax(hist[::-1, :] > 0, axis=0)
 
-    first_y_values = []
-    x_bin_centers = []
+    # Filtrar columnas donde no hay valores no cero
+    valid_columns = np.any(hist > 0, axis=0)
+    first_nonzero_indices = first_nonzero_indices[valid_columns]
+    x_bin_centers = (xedges[:-1] + xedges[1:]) / 2
+    x_bin_centers = x_bin_centers[valid_columns]
 
-    # Recorrer cada columna del histograma (eje X)
-    for i in range(hist.shape[1]-1):
-        # Recorrer los bins del eje Y desde arriba hacia abajo
-        for j in range(hist.shape[0]-1):
-            if hist[i, (hist.shape[0]-1)-j] > 0:  # Si el valor es distinto de cero
-                x_bin_centers.append((xedges[i] + xedges[i+1]) / 2)  # Centro del bin en X
-                first_y_values.append(yedges[(hist.shape[0]-1)-j])  # Valor del bin en Y
-                break
-
-    first_y_values = np.atleast_1d(first_y_values)
-    x_bin_centers = np.atleast_1d(x_bin_centers)
+    # Convertir los índices de bins en valores Y
+    first_y_values = yedges[-1 - first_nonzero_indices]
 
     return [x_bin_centers, first_y_values]
+
 
 def stop(val):
     global stop_val
@@ -166,14 +200,13 @@ def stop(val):
 
 def inter(val):
     global txt2
-    global inter_text
-    global inter_text_index
-    if(inter_text_index>=5):
-        inter_text_index = 0
-        txt2.set_val(inter_text[0])
-    else:
-        inter_text_index = inter_text_index + 1
-        txt2.set_val(inter_text[inter_text_index])
+    global amplitud_solicitada
+    global frecuencia_solicitada
+    
+    datos = txt2.text.split(sep=',')
+
+    amplitud_solicitada = datos[0]
+    frecuencia_solicitada = datos[1]
 
 def Wind(val):
     global config
@@ -190,13 +223,54 @@ def Wind(val):
 def init():
     plt.subplots_adjust(bottom=0.2)
 
-def FFT1_callback(data):
+"""def FFT1_callback(data):
     global window_list
     global wind_text_index
     global FFT_kill
     global FFT_queue
     global FFTs
     global ff
+
+    global contador
+
+    # Configuración de pyFFTW
+    fft_size = args.window
+    pyfftw.config.NUM_THREADS = 4  # Ajusta el número de hilos según tu sistema
+    fft_buffer = pyfftw.empty_aligned(fft_size, dtype='complex128')
+    fft_result = pyfftw.empty_aligned(fft_size, dtype='complex128')
+    fft_plan = pyfftw.FFTW(fft_buffer, fft_result, direction='FFTW_FORWARD')
+
+    while not FFT_kill:
+        try:
+            # Espera datos en la cola
+            data = FFT_queue[0].get()
+
+            # Multiplica por la ventana correspondiente
+            data_windowed = data * window_list[wind_text_index]
+
+            # Copia los datos al búfer de pyFFTW
+            np.copyto(fft_buffer, data_windowed)
+
+            # Ejecuta la FFT con pyFFTW
+            fft_plan.execute()
+
+            # Obtiene la magnitud en decibelios
+            b = np.abs(fft_result)
+            b[b == 0] = 0.00001  # Evitar valores cero
+            b = 20 * np.log10(b / len(b))
+
+            # Pasa la mitad de la FFT a la cola para el histograma
+            FFT_to_HIST.put(b[:args.window // 2])
+            contador += 1
+        except Exception as e:
+            print(f"Error en FFT1_callback: {e}")"""
+
+
+def FFT1_callback(data):
+    global window_list
+    global wind_text_index
+    global FFT_kill
+    global FFT_queue
 
     global contador
 
@@ -207,6 +281,7 @@ def FFT1_callback(data):
         contador = contador + 1
 
         fft_result = np.fft.fft(data*(window_list[wind_text_index]))
+        
 
         #print(get_uncertainty(fft_result,100)/np.abs(fft_result[100]))
 
@@ -218,7 +293,7 @@ def FFT1_callback(data):
 
         b = 20*np.log10(b/len(b))                                                        
 
-        FFT_to_HIST.put(b[:args.window//2])   
+        FFT_to_HIST.put(b[:args.window//2])  
 
 """def audio_callback(indata, frames, time, status):
     This is called (from a separate thread) for each audio block.
@@ -235,13 +310,13 @@ def FFT1_callback(data):
     FFT_queue[FFT_thead_index].put(plotdata[:, 0])"""
 
 PUERTO = "/dev/ttyUSB0"
-baudrate = 115200
+baudrate = 500000
 shift = 0
 
 def sample_callback(data):
     global FFT_kill
     global plotdata
-    global shift
+    shift = 0
 
     try:
         ser = serial.Serial(port=PUERTO, baudrate=baudrate)
@@ -269,60 +344,62 @@ def sample_callback(data):
                 FFT_queue[FFT_thead_index].put(plotdata)
                 shift = 0
             
-            t1 = time.time()
+            """t1 = time.time()
             if(t1-taux>=1):
-                #print("Fs = "+str(contador))
+                print("Fs = " + str(contador))
                 contador = 0
-                taux = t1
+                taux = t1"""
 
 def HISTOGRAM_callback(data):
     global FFT_kill
-    global plotdata, i, Z, contador, tprev, window_list, wind_text_index, FFTs, ff, FFT_to_HIST
+    global i, Z, contador, tprev, window_list, wind_text_index, FFTs, ff, FFT_to_HIST
+
+    FFTs = np.zeros(args.window*LEN_SIZE)
+    ff = np.zeros(args.window*LEN_SIZE)
+
+    shift = int(((LEN_SIZE-1)*args.window) + (args.window/2) - 1)
 
     while (FFT_kill==False):
 
-        t1 = time.time()
+        """t1 = time.time()
         if((t1-tprev)>=1 and tprev!=0):
-            #print('Cantidad de FFTs por segundo = ' + str(contador) + ' FFTs/Seg')
+            print('Cantidad de FFTs por segundo = ' + str(contador) + ' FFTs/Seg')
             contador = 0
             tprev = t1
         elif(tprev==0):
-            tprev = t1
+            tprev = t1"""
 
         aux = FFT_to_HIST.get()
 
-        FFTs.append(aux)
-        ff.append(frecuencias[:args.window//2])
+        FFTs = np.roll(FFTs,-args.window)
 
-        if(len(FFTs)>3 and len(ff)>3):
-            FFTs_concatenados = np.concatenate(FFTs)
-            fff = np.concatenate(ff)
+        FFTs[shift:-1] = aux
 
-            if(len(FFTs)>LEN_SIZE and len(FFTs_concatenados)==len(fff)):
+        ff = np.roll(ff,-args.window)
+        ff[shift:-1] = frecuencias[:args.window//2]
 
-                # Espectrograma en la cuarta columna
-                H = histogram2d(x=fff, y=FFTs_concatenados, bins=BINS, range=hist_range)
-                q.put(H)
+        H = histogram2d(x=ff, y=FFTs, bins=BINS, range=hist_range)
+        q.put(H)
 
-                FFTs = FFTs[:len(FFTs)//2]
-                ff = ff[:len(ff)//2]
 
 def update_plot(frame):
-    global plotdata, Z, window_list, wind_text_index, FFTs, stop_val
+    global plotdata, Z, window_list, wind_text_index, FFTs, stop_val, amplitud_solicitada, frecuencia_solicitada
 
-    xedges = np.linspace(hist_range[0][0],hist_range[0][1],BINS)
-    yedges = np.linspace(hist_range[1][0],hist_range[1][1],BINS)
+    xedges = np.linspace(hist_range[0][0],hist_range[0][1],BINS+1)
+    yedges = np.linspace(hist_range[1][0],hist_range[1][1],BINS+1)
 
     lines1.set_ydata(plotdata*(window_list[wind_text_index]))
 
     # Espectrograma en la tercera columna
-    if(len(FFTs[-1])==len(Z[-1])):
+    if(len(FFTs)==len(Z)):
         Z = np.roll(Z, -1, axis=0)
         Z[-1] = FFTs[-1]
         quadmesh.set_array(Z)
 
     if(q.empty() == False):
         H = q.get()
+
+        H = H.T
 
         x_bin_centers, first_y_values = get_hist2d_curve(H,xedges,yedges)
 
@@ -333,14 +410,38 @@ def update_plot(frame):
         if(stop_val==1):
             x_max_value, y_max_value, f1, f2 = get_FMBW(x_bin_centers,first_y_values)
 
-            print("--------------------------------------")
+            """print("--------------------------------------")
             print(f"Valor maximo en frecuencia = {x_max_value}")
             print(f"Valor maximo en dB = {y_max_value}")
             print(f"Valor f1 = {f1}")
             print(f"Valor f2 = {f2}")
-            print("--------------------------------------")
+            print("--------------------------------------")"""
 
-            espectrograma.set_array(H.T)
+            amplitud_solicitada = int(amplitud_solicitada)
+            frecuencia_solicitada = int(frecuencia_solicitada)
+
+            array = np.asarray(xedges) 
+            idx_f = (np.abs(array - frecuencia_solicitada)).argmin()
+            frecuencia_corregida = xedges[idx_f]
+
+            array = np.asarray(yedges) 
+            idx_a = (np.abs(array - amplitud_solicitada)).argmin()
+            amplitud_corregida = yedges[idx_a]
+
+            u_i = get_uncertainty_no_array(amplitud_corregida,frecuencia_corregida)
+
+            print("---")
+            print(frecuencia_corregida)
+            print(idx_f)
+            print(amplitud_corregida)
+            print(idx_a)
+            print("---")
+
+            u_i_informada = u_i/np.sqrt(H.T[idx_f,idx_a])
+
+            print(u_i_informada)
+
+            espectrograma.set_array(H)
     
 
 
@@ -348,11 +449,14 @@ try:
     sig.signal(sig.SIGINT,handler=handler) 
     FFTs = []
     ff = []
-    FFT1 = threading.Thread(target=FFT1_callback, args=(1,))
+    plotdata = np.zeros(args.window)
+    frecuencias = np.fft.fftfreq(len(plotdata), args.downsample/Fs)        # Fs = 500Hz
+
+    FFT1 = threading.Thread(target=FFT1_callback, args=(1,), daemon=True)
     FFT1.start()
-    HISTOGRAM = threading.Thread(target=HISTOGRAM_callback, args=(1,))
+    HISTOGRAM = threading.Thread(target=HISTOGRAM_callback, args=(1,), daemon=True)
     HISTOGRAM.start()
-    samples = threading.Thread(target=sample_callback, args=(1,))
+    samples = threading.Thread(target=sample_callback, args=(1,), daemon=True)
     samples.start()
     if args.samplerate is None:
         device_info = sd.query_devices(args.device, 'input')
@@ -367,13 +471,12 @@ try:
         for i in range(len(window_list)):
             if(args.ventaneo==WINDOW_NAME_LIST[i]): wind_text_index = i
     # length = int(args.window * args.samplerate / (1000 * args.downsample))
-    plotdata = np.zeros(args.window)
     fig, (ax1, ax3, ax4) = plt.subplots(3,1)
     fig.tight_layout(pad=1)
     fig.subplots_adjust(bottom=0.25)
     lines1, = ax1.plot(plotdata)
     # Calcular las frecuencias asociadas
-    frecuencias = np.fft.fftfreq(len(plotdata), args.downsample/500)        # Fs = 500Hz
+    
     if len(args.channels) > 1:
         ax1.legend([f'channel {c}' for c in args.channels],
                   loc='lower left', ncol=len(args.channels))
@@ -385,23 +488,8 @@ try:
     Z = np.zeros((LEN_SIZE, args.window//2))
     quadmesh = ax3.pcolormesh(X, Y, Z, vmin=0, vmax=50)
 
-    f_interpolation = np.linspace(0,int(max(frecuencias)),250)                    # Definimos un eje de frecuencia para la interpolacion
-
-    b = np.interp(f_interpolation, frecuencias[:args.window//2], np.zeros(args.window//2))                                          # Realizamos la interpolacion
-
-    for i in range(len(b)):
-        if(b[i]==0):
-            b[i]=0.00001
-
-    b = 20*np.log10(np.abs(b))                                                        # Pasamos a decibelios (dBm)
-
-    for i in range(LEN_SIZE):
-
-        FFTs.append(b)
-        ff.append(f_interpolation)
-
-    FFTs_concatenados = np.concatenate(FFTs)
-    fff = np.concatenate(ff)
+    FFTs = np.zeros(args.window*LEN_SIZE)
+    ff = np.zeros(args.window*LEN_SIZE)
 
     H, xedges, yedges = np.histogram2d(x=frecuencias[:args.window//2], y=np.zeros(args.window//2), bins=BINS, range=hist_range)
     espectrograma = ax4.pcolormesh(xedges, yedges, H.T)
