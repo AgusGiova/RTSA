@@ -90,6 +90,8 @@ first=1
 window_list = []
 hist_range = ((1,1000),(-100,5))
 u_i = 0
+u_i_second_graph = 0
+u_i_third_graph = 0
 
 """
 
@@ -104,6 +106,7 @@ matriz de incertidumbres y hacer sqrt(sumar(u_i^2))
 
 Fs = 2000
 
+NUM_BITS = 10
 BINS = 200
 LEN_SIZE = 50
 WINDOW_NAME_LIST = ['flattop','blackman','hamming','hann','bartlett','parzen','bohman']
@@ -122,7 +125,7 @@ def handler(signum, frame):
 
     exit()
 
-def get_uncertainty(y,x):
+def get_uncertainty_matrix(y,x):
 
     u = 0
     for i in range(args.window):
@@ -133,13 +136,15 @@ def get_uncertainty(y,x):
     u_real = np.real(u)
     u_imag = np.imag(u)
 
-    u_real_chi2 = 2*(u_real**4) + 4*(u_real**2)*(np.real(y[x])**2)
-    u_imag_chi2 = 2*(u_imag**4) + 4*(u_imag**2)*(np.imag(y[x])**2)
+    u_real_chi2 = 2*(u_real**4) + 4*(u_real**2)*(np.real(y)**2)
+    u_imag_chi2 = 2*(u_imag**4) + 4*(u_imag**2)*(np.imag(y)**2)
 
     u_sum2 = u_real_chi2 + u_imag_chi2
 
     u_val = (1/(4*np.sqrt((u_real**2)+(u_imag**2))))*u_sum2
     u_val = np.sqrt(u_val)
+
+    u_val = np.sqrt(np.sum(u_val**2))
 
     return u_val
 
@@ -352,7 +357,7 @@ def sample_callback(data):
 
 def HISTOGRAM_callback(data):
     global FFT_kill
-    global i, Z, contador, tprev, window_list, wind_text_index, FFTs, ff, FFT_to_HIST
+    global i, Z, contador, tprev, window_list, wind_text_index, FFTs, ff, FFT_to_HIST, frecuencia_solicitada, u_i_second_graph
 
     FFTs = np.zeros(args.window*LEN_SIZE)
     ff = np.zeros(args.window*LEN_SIZE)
@@ -379,11 +384,22 @@ def HISTOGRAM_callback(data):
         ff[shift:-1] = frecuencias[:args.window//2]
 
         H = histogram2d(x=ff, y=FFTs, bins=BINS, range=hist_range)
+
+        frecuencia_solicitada = int(frecuencia_solicitada)
+
+        array = np.asarray(xedges) 
+        idx_f = (np.abs(array - frecuencia_solicitada)).argmin()
+        frecuencia_corregida = xedges[idx_f]
+
+        uncertainty_vector = range(int(frecuencia_corregida), len(FFTs), len(aux))
+        uncertainty_vector = FFTs[uncertainty_vector]
+        u_i_second_graph = get_uncertainty_matrix(uncertainty_vector,frecuencia_solicitada)
+
         q.put(H)
 
 
 def update_plot(frame):
-    global plotdata, Z, window_list, wind_text_index, FFTs, stop_val, amplitud_solicitada, frecuencia_solicitada
+    global plotdata, Z, window_list, wind_text_index, FFTs, stop_val, amplitud_solicitada, frecuencia_solicitada, u_i_second_graph, u_i_third_graph, txt4, txt5
 
     xedges = np.linspace(hist_range[0][0],hist_range[0][1],BINS+1)
     yedges = np.linspace(hist_range[1][0],hist_range[1][1],BINS+1)
@@ -391,10 +407,10 @@ def update_plot(frame):
     lines1.set_ydata(plotdata*(window_list[wind_text_index]))
 
     # Espectrograma en la tercera columna
-    if(len(FFTs)==len(Z)):
-        Z = np.roll(Z, -1, axis=0)
-        Z[-1] = FFTs[-1]
-        quadmesh.set_array(Z)
+    
+    Z = np.roll(Z, -1, axis=0)
+    Z[-1] = FFTs[len(FFTs)-(args.window//2):]
+    quadmesh.set_array(Z)
 
     if(q.empty() == False):
         H = q.get()
@@ -430,20 +446,12 @@ def update_plot(frame):
 
             u_i = get_uncertainty_no_array(amplitud_corregida,frecuencia_corregida)
 
-            print("---")
-            print(frecuencia_corregida)
-            print(idx_f)
-            print(amplitud_corregida)
-            print(idx_a)
-            print("---")
+            u_i_third_graph = u_i/np.sqrt(H.T[idx_f,idx_a])
 
-            u_i_informada = u_i/np.sqrt(H.T[idx_f,idx_a])
-
-            print(u_i_informada)
+            txt4.set_val(f"{u_i_second_graph:.4f}")
+            txt5.set_val(f"{u_i_third_graph:.4f}")
 
             espectrograma.set_array(H)
-    
-
 
 try:
     sig.signal(sig.SIGINT,handler=handler) 
@@ -480,13 +488,13 @@ try:
     if len(args.channels) > 1:
         ax1.legend([f'channel {c}' for c in args.channels],
                   loc='lower left', ncol=len(args.channels))
-    ax1.axis((0, len(plotdata), -1, 1))
+    ax1.axis((0, len(plotdata), -(2**(NUM_BITS-1)), (2**(NUM_BITS-1))-1))
     ax1.set_yticks([0])
     #ax1.tick_params(bottom=False, top=False, labelbottom=False,
     #               right=False, left=False, labelleft=False)
     X, Y = np.meshgrid(frecuencias[:args.window//2], np.arange(LEN_SIZE))
     Z = np.zeros((LEN_SIZE, args.window//2))
-    quadmesh = ax3.pcolormesh(X, Y, Z, vmin=0, vmax=50)
+    quadmesh = ax3.pcolormesh(X, Y, Z, vmin=-120, vmax=50)
 
     FFTs = np.zeros(args.window*LEN_SIZE)
     ff = np.zeros(args.window*LEN_SIZE)
@@ -519,6 +527,11 @@ try:
     # Texto de ventaneo
     txt_axes3 = plt.axes([0.4, 0.1, 0.1, 0.075])
     txt3 = widgets.TextBox(txt_axes3, '')
+
+    txt_axes4 = plt.axes([0.2, 0.15, 0.1, 0.075])
+    txt4 = widgets.TextBox(txt_axes4, 'U_2 = ')
+    txt_axes5 = plt.axes([0.2, 0.05, 0.1, 0.075])
+    txt5 = widgets.TextBox(txt_axes5, 'U_3 = ')
 
     #stream = sd.InputStream(
     #    device=args.device, channels=max(args.channels),
