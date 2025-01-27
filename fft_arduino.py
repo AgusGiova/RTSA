@@ -22,6 +22,7 @@ import signal as sig
 import matplotlib.widgets as widgets
 import threading
 import cmath
+import struct
 
 def int_or_str(text):
     """Helper function for argument parsing."""
@@ -106,6 +107,8 @@ matriz de incertidumbres y hacer sqrt(sumar(u_i^2))
 
 Fs = 2000
 
+PLOT_LIMITS_DOWN = 0
+PLOT_LIMITS_UP = 5
 NUM_BITS = 10
 BINS = 200
 LEN_SIZE = 50
@@ -322,9 +325,10 @@ def sample_callback(data):
     global FFT_kill
     global plotdata
     shift = 0
+    numero = 0
 
     try:
-        ser = serial.Serial(port=PUERTO, baudrate=baudrate)
+        ser = serial.Serial(port=PUERTO,parity=serial.PARITY_NONE, baudrate=baudrate)
     except serial.SerialException as e:
         print(f"Error abriendo el puerto: {e}")
         FFT_kill = True
@@ -335,25 +339,45 @@ def sample_callback(data):
 
     while(FFT_kill==False):
 
-        if(ser.in_waiting>0):
-            linea = ser.readline().decode("latin-1").strip()
+        if(ser.in_waiting>=1):
+            #linea = ser.readline().decode("latin-1").strip()
+            #linea = ser.readline().decode('utf-8', errors='ignore')
 
-            if linea.isdecimal():
+            datos = ser.read(1)
+            #numero_little = struct.unpack('<H', datos)[0]
+            #numero_big = struct.unpack('>H', datos)[0]
+            numero = int(datos)
+            print(numero)
+            contador = contador + 1
+            plotdata = np.roll(plotdata, -1)
+            plotdata[-1] = numero*5/1023
+            shift = shift + 1 
+
+
+            """if linea.isdecimal():
                 numero = int(linea)
                 contador = contador + 1
                 plotdata = np.roll(plotdata, -1)
                 plotdata[-1] = numero*5/1023
-                shift = shift + 1
+                shift = shift + 1 """
+
+            """ match = re.search(r'(\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+)', linea)
+            if match:
+                numeros = np.array(match.group(1).split(','), dtype=int)
+                contador = contador + len(numeros)
+                plotdata = np.roll(plotdata, -len(numeros))
+                plotdata[-len(numeros):] = numeros*5/1023
+                shift = shift + 1 """
 
             if((shift/len(plotdata))>=(1-(args.overlaping/100))):
                 FFT_queue[FFT_thead_index].put(plotdata)
                 shift = 0
             
-            """t1 = time.time()
+            t1 = time.time()
             if(t1-taux>=1):
                 print("Fs = " + str(contador))
                 contador = 0
-                taux = t1"""
+                taux = t1
 
 def HISTOGRAM_callback(data):
     global FFT_kill
@@ -488,7 +512,7 @@ try:
     if len(args.channels) > 1:
         ax1.legend([f'channel {c}' for c in args.channels],
                   loc='lower left', ncol=len(args.channels))
-    ax1.axis((0, len(plotdata), -(2**(NUM_BITS-1)), (2**(NUM_BITS-1))-1))
+    ax1.axis((0, len(plotdata), PLOT_LIMITS_DOWN, PLOT_LIMITS_UP))
     ax1.set_yticks([0])
     #ax1.tick_params(bottom=False, top=False, labelbottom=False,
     #               right=False, left=False, labelleft=False)
