@@ -53,7 +53,7 @@ parser.add_argument(
     '-d', '--device', type=int_or_str,
     help='input device (numeric ID or substring)')
 parser.add_argument(
-    '-w', '--window', type=int, default=8192, metavar='DURATION',
+    '-w', '--window', type=int, default=1024, metavar='DURATION',
     help='visible time slot (default: %(default)s ms)')
 parser.add_argument(
     '-i', '--interval', type=float, default=1,
@@ -81,6 +81,7 @@ FFT_queue.append(queue.Queue())
 FFT_kill = False
 FFT_thead_index = 0
 
+Fs = 60000
 inter_val = [1,2,5,10,20,40]
 stop_val = 1
 inter_text = ['x1','x2','x5','x10','x20','x40']
@@ -89,7 +90,7 @@ wind_text = ['Rectangular','Flattop','Hamming','Hann','Bartlett','Parzen','Bohma
 wind_text_index = 0
 first=1
 window_list = []
-hist_range = ((1,1000),(-100,5))
+hist_range = ((1,Fs/2),(-100,5))
 u_i = 0
 u_i_second_graph = 0
 u_i_third_graph = 0
@@ -105,17 +106,16 @@ matriz de incertidumbres y hacer sqrt(sumar(u_i^2))
 
 """
 
-Fs = 2000
-
 PLOT_LIMITS_DOWN = 0
 PLOT_LIMITS_UP = 5
-NUM_BITS = 10
+NUM_BITS = 8
+VCC_ADC = 3.3
 BINS = 200
 LEN_SIZE = 50
 WINDOW_NAME_LIST = ['flattop','blackman','hamming','hann','bartlett','parzen','bohman']
 
 amplitud_solicitada = 0
-frecuencia_solicitada = 250
+frecuencia_solicitada = Fs/4
 
 ADC_UNCERTAINTY = 1   #No es porcentual (1 mV) (Valor a modo de prueba)
 
@@ -231,48 +231,6 @@ def Wind(val):
 def init():
     plt.subplots_adjust(bottom=0.2)
 
-"""def FFT1_callback(data):
-    global window_list
-    global wind_text_index
-    global FFT_kill
-    global FFT_queue
-    global FFTs
-    global ff
-
-    global contador
-
-    # Configuración de pyFFTW
-    fft_size = args.window
-    pyfftw.config.NUM_THREADS = 4  # Ajusta el número de hilos según tu sistema
-    fft_buffer = pyfftw.empty_aligned(fft_size, dtype='complex128')
-    fft_result = pyfftw.empty_aligned(fft_size, dtype='complex128')
-    fft_plan = pyfftw.FFTW(fft_buffer, fft_result, direction='FFTW_FORWARD')
-
-    while not FFT_kill:
-        try:
-            # Espera datos en la cola
-            data = FFT_queue[0].get()
-
-            # Multiplica por la ventana correspondiente
-            data_windowed = data * window_list[wind_text_index]
-
-            # Copia los datos al búfer de pyFFTW
-            np.copyto(fft_buffer, data_windowed)
-
-            # Ejecuta la FFT con pyFFTW
-            fft_plan.execute()
-
-            # Obtiene la magnitud en decibelios
-            b = np.abs(fft_result)
-            b[b == 0] = 0.00001  # Evitar valores cero
-            b = 20 * np.log10(b / len(b))
-
-            # Pasa la mitad de la FFT a la cola para el histograma
-            FFT_to_HIST.put(b[:args.window // 2])
-            contador += 1
-        except Exception as e:
-            print(f"Error en FFT1_callback: {e}")"""
-
 
 def FFT1_callback(data):
     global window_list
@@ -303,75 +261,40 @@ def FFT1_callback(data):
 
         FFT_to_HIST.put(b[:args.window//2])  
 
-"""def audio_callback(indata, frames, time, status):
-    This is called (from a separate thread) for each audio block.
-    global plotdata, FFT_queue, FFT_thead_index
-
-    if status:
-        print(status, file=sys.stderr)
-    # Fancy indexing with mapping creates a (necessary!) copy:
-    shift = len(indata[::args.downsample, mapping])
-    plotdata = np.roll(plotdata, -shift, axis=0)
-
-    plotdata[-shift:, :] = indata[::args.downsample, mapping]
-
-    FFT_queue[FFT_thead_index].put(plotdata[:, 0])"""
-
 PUERTO = "/dev/ttyUSB0"
-baudrate = 500000
-shift = 0
+baudrate = 115200
 
 def sample_callback(data):
     global FFT_kill
     global plotdata
-    shift = 0
-    numero = 0
 
     try:
-        ser = serial.Serial(port=PUERTO,parity=serial.PARITY_NONE, baudrate=baudrate)
+        ser = serial.Serial(port=PUERTO,parity=serial.PARITY_NONE, baudrate=baudrate, timeout=1)
     except serial.SerialException as e:
         print(f"Error abriendo el puerto: {e}")
         FFT_kill = True
     
+    shift = int(args.window/4)
+    cont = shift
     contador = 0
     t1 = time.time()
     taux = time.time()
 
+    time.sleep(1)
+
     while(FFT_kill==False):
 
         if(ser.in_waiting>=1):
-            #linea = ser.readline().decode("latin-1").strip()
-            #linea = ser.readline().decode('utf-8', errors='ignore')
 
-            datos = ser.read(1)
-            #numero_little = struct.unpack('<H', datos)[0]
-            #numero_big = struct.unpack('>H', datos)[0]
-            numero = int(datos)
-            print(numero)
             contador = contador + 1
-            plotdata = np.roll(plotdata, -1)
-            plotdata[-1] = numero*5/1023
-            shift = shift + 1 
+            plotdata = np.roll(plotdata, -shift, axis=0)
+            print(plotdata)
+            plotdata[-shift:] = np.frombuffer(ser.read(shift), dtype=np.uint8)*VCC_ADC/((2**NUM_BITS)-1)
+            cont = 2*cont
 
-
-            """if linea.isdecimal():
-                numero = int(linea)
-                contador = contador + 1
-                plotdata = np.roll(plotdata, -1)
-                plotdata[-1] = numero*5/1023
-                shift = shift + 1 """
-
-            """ match = re.search(r'(\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+,\d+)', linea)
-            if match:
-                numeros = np.array(match.group(1).split(','), dtype=int)
-                contador = contador + len(numeros)
-                plotdata = np.roll(plotdata, -len(numeros))
-                plotdata[-len(numeros):] = numeros*5/1023
-                shift = shift + 1 """
-
-            if((shift/len(plotdata))>=(1-(args.overlaping/100))):
+            if((cont/len(plotdata))>=(1-(args.overlaping/100))):
                 FFT_queue[FFT_thead_index].put(plotdata)
-                shift = 0
+                cont = shift
             
             t1 = time.time()
             if(t1-taux>=1):
@@ -448,14 +371,6 @@ def update_plot(frame):
             ploteo.set_ydata(first_y_values)
 
         if(stop_val==1):
-            x_max_value, y_max_value, f1, f2 = get_FMBW(x_bin_centers,first_y_values)
-
-            """print("--------------------------------------")
-            print(f"Valor maximo en frecuencia = {x_max_value}")
-            print(f"Valor maximo en dB = {y_max_value}")
-            print(f"Valor f1 = {f1}")
-            print(f"Valor f2 = {f2}")
-            print("--------------------------------------")"""
 
             amplitud_solicitada = int(amplitud_solicitada)
             frecuencia_solicitada = int(frecuencia_solicitada)
@@ -557,13 +472,7 @@ try:
     txt_axes5 = plt.axes([0.2, 0.05, 0.1, 0.075])
     txt5 = widgets.TextBox(txt_axes5, 'U_3 = ')
 
-    #stream = sd.InputStream(
-    #    device=args.device, channels=max(args.channels),
-    #    samplerate=args.samplerate, callback=audio_callback,
-    #    blocksize=int(args.overlaping*args.window/100))
     ani = FuncAnimation(fig, update_plot, interval=args.interval, blit=False)
-    #with stream:
-    #    plt.show()
     plt.show()
     FFT_kill = True
 except Exception as e:
